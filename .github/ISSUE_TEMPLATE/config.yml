@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/Esliph/metadata/tree/master/docs
+    about: Tutorials, guides and the reference for every operation.
+  - name: Security vulnerability
+    url: https://github.com/Esliph/metadata/security/advisories/new
+    about: Report a vulnerability privately. Do not open a public issue.

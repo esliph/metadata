@@ -1,6 +1,6 @@
 # How to develop the library
 
-This guide shows how to install, test, check, build and release `@esliph/metadata`. It assumes Node.js 20 or later, npm and a clone of the repository.
+This guide shows how to install, test, check, build and release `@esliph/metadata`. It assumes Node.js 22 or later, npm and a clone of the repository.
 
 ## Install
 
@@ -37,10 +37,10 @@ Vitest does not type-check. Run the compiler over `src` and `tests`:
 npx tsc -p tests/tsconfig.json --noEmit
 ```
 
-There is no lint script. Run ESLint directly:
+Run ESLint:
 
 ```bash
-npx eslint .
+npm run lint
 ```
 
 Prettier settings are in `.prettierrc`: no semicolons, single quotes, 2 spaces, 160 columns.
@@ -63,11 +63,13 @@ The script checks the manifest, the packed file list, and installs the package i
 
 ## Release
 
+Pull requests and pushes to `master` run the same checks on Node 22 and 24 (`.github/workflows/ci.yml`).
+
 1. Update `version` in `package.json` and commit.
-2. Run `npx eslint .`, `npx tsc -p tests/tsconfig.json --noEmit`, `npx vitest run`, `npm run build` and `npm run check:package`. The release workflow runs the same checks.
+2. Run `npm run lint`, `npx tsc -p tests/tsconfig.json --noEmit`, `npx vitest run`, `npm run build` and `npm run check:package`. The release workflow runs the same checks.
 3. Publish a GitHub release whose tag is the version, for example `3.0.0`.
 
-Publishing the release starts `.github/workflows/publish.yml`, which runs `npm ci`, lint, type check, tests, build, `npm run check:package` and `npm publish` on Node 20 with the `NPM_TOKEN` secret.
+Publishing the release starts `.github/workflows/publish.yml`, which runs `npm ci`, lint, type check, tests, build, `npm run check:package` and `npm publish` on Node 24 with the `NPM_TOKEN` secret.
 
 ## Update the documentation
 

@@ -92,8 +92,10 @@ Importing `Reflect` from this package hides the native `Reflect` in that module.
 
 ## Contributing
 
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before you open an issue or a pull request. Everyone who takes part follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+
 Architecture, storage model and local commands are in [docs/explanation/architecture](docs/explanation/architecture/overview.md) and [Develop the library](docs/how-to/develop-the-library.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)

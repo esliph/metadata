@@ -1,0 +1,75 @@
+name: Bug report
+description: Report behavior that is wrong or missing.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search the existing issues and the [Known limitations](https://github.com/Esliph/metadata/blob/master/docs/reference/known-limitations.md) before you open a report.
+
+        Report security problems as described in `SECURITY.md`. Do not open an issue for them.
+
+  - type: input
+    id: version
+    attributes:
+      label: "@esliph/metadata version"
+      placeholder: 3.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: v24.0.0
+    validations:
+      required: true
+
+  - type: input
+    id: typescript
+    attributes:
+      label: TypeScript version and the experimentalDecorators value
+      placeholder: 5.9.3, experimentalDecorators false
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: The smallest code that shows the problem.
+      render: ts
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the error `code` when the call throws.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: parity
+    attributes:
+      label: Does `reflect-metadata` 0.2.2 return the same result?
+      options:
+        - Yes, it is the same
+        - No, it differs
+        - I did not check
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues and the known limitations.
+          required: true
