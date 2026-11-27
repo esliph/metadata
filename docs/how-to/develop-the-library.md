@@ -63,6 +63,8 @@ The script checks the manifest, the packed file list, and installs the package i
 
 ## Release
 
+Pull requests and pushes to `master` run the same checks on Node 22 and 24 (`.github/workflows/ci.yml`).
+
 1. Update `version` in `package.json` and commit.
 2. Run `npm run lint`, `npx tsc -p tests/tsconfig.json --noEmit`, `npx vitest run`, `npm run build` and `npm run check:package`. The release workflow runs the same checks.
 3. Publish a GitHub release whose tag is the version, for example `3.0.0`.
