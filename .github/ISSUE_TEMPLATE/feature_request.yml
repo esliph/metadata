@@ -30,7 +30,7 @@ body:
       label: Does it change an operation that `reflect-metadata` also has?
       options:
         - No, it is a new API
-        - Yes
+        - "Yes"
         - Not sure
     validations:
       required: true
