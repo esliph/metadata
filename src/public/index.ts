@@ -1,1 +1,2 @@
-export * from '@public/reflect-metadata';
+export * from '@public/decorate'
+export * from '@public/reflect-metadata'

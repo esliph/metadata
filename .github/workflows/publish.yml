@@ -23,8 +23,20 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Lint
+        run: npx eslint .
+
+      - name: Type check
+        run: npx tsc -p tests/tsconfig.json --noEmit
+
+      - name: Test
+        run: npx vitest run
+
       - name: Build
         run: npm run build
+
+      - name: Check package
+        run: npm run check:package
 
       - name: Publish
         run: npm publish

@@ -11,6 +11,12 @@ export default defineConfig(
     ignores: ['dist/*', 'node_modules/*'],
   },
   {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { console: 'readonly', process: 'readonly' },
+    },
+  },
+  {
     files: ['**/*.{js,ts,mjs}'],
     rules: {
       indent: ['off', 'spaces', 2],

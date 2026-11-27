@@ -17,11 +17,6 @@ export const INVALID_TARGET_LIST: any[] = [
   'string',
   '',
   Symbol('sym'),
-
-  () => { },
-  async () => { },
-  function* () { },
-  async function () { },
 ]
 
 export const VALID_TARGET_LIST: any[] = [
@@ -37,4 +32,21 @@ export const VALID_TARGET_LIST: any[] = [
   Promise.resolve(),
   Object.freeze({ a: 1 }),
   Object.seal({ b: 2 }),
+
+  () => { },
+  async () => { },
+  function* () { },
+  async function () { },
+  async function* () { },
+  function () { }.bind(null),
+  Object.create(null),
+  Function.prototype,
 ]
+
+export function describeTarget(value: unknown) {
+  try {
+    return String(value)
+  } catch {
+    return Object.prototype.toString.call(value)
+  }
+}

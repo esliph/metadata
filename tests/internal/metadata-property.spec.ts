@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test } from 'vitest'
 import { MetadataContainer } from '@core/container'
 import { ReflectMetadataErrorCode } from '@exceptions/code-errors'
 import { InvalidTargetReflectMetadataException } from '@exceptions/invalid-target.exception'
-import { INVALID_TARGET_LIST, VALID_TARGET_LIST } from '@tests/common/types-target-list'
+import { describeTarget, INVALID_TARGET_LIST, VALID_TARGET_LIST } from '@tests/common/types-target-list'
 
 describe('MetadataContainer Property', () => {
   let container: MetadataContainer
@@ -330,7 +330,7 @@ describe('MetadataContainer Property', () => {
             expect(error.code).toBe(ReflectMetadataErrorCode.TARGET_METADATA_INVALID)
             throw error
           }
-        }, `expected "${String(value)}" (${typeof value}) to throw an error`)
+        }, `expected "${describeTarget(value)}" (${typeof value}) to throw an error`)
           .toThrow(InvalidTargetReflectMetadataException)
       })
     })
@@ -339,7 +339,7 @@ describe('MetadataContainer Property', () => {
       VALID_TARGET_LIST.forEach(value => {
         expect(() => {
           container.defineMetadata('key', 'value', value, 'prop')
-        }, `expected "${String(value)}" (${typeof value}) not to throw an error`)
+        }, `expected "${describeTarget(value)}" (${typeof value}) not to throw an error`)
           .not.toThrow(InvalidTargetReflectMetadataException)
       })
     })

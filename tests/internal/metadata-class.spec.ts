@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test } from 'vitest'
 import { MetadataContainer } from '@core/container'
 import { ReflectMetadataErrorCode } from '@exceptions/code-errors'
 import { InvalidTargetReflectMetadataException } from '@exceptions/invalid-target.exception'
-import { INVALID_TARGET_LIST, VALID_TARGET_LIST } from '@tests/common/types-target-list'
+import { describeTarget, INVALID_TARGET_LIST, VALID_TARGET_LIST } from '@tests/common/types-target-list'
 
 describe('MetadataContainer Class', () => {
   let container: MetadataContainer
@@ -104,15 +104,15 @@ describe('MetadataContainer Class', () => {
       expect(container.hasMetadata('key', instance)).toBe(true)
     })
 
-    test('should retrieve metadata defined on an instance when querying by the class', () => {
+    test('should not retrieve metadata defined on an instance when querying by the class', () => {
       class Class { }
 
       const instance = new Class()
 
       container.defineMetadata('key', 'value', instance)
 
-      expect(container.getMetadata('key', Class)).toBe('value')
-      expect(container.hasMetadata('key', Class)).toBe(true)
+      expect(container.getMetadata('key', Class)).toBeUndefined()
+      expect(container.hasMetadata('key', Class)).toBe(false)
     })
   })
 
@@ -131,15 +131,15 @@ describe('MetadataContainer Class', () => {
       expect(container.getOwnMetadata('own-key', Child)).toBeUndefined()
     })
 
-    test('getOwnMetadata reflects metadata defined via instance on the constructor', () => {
+    test('metadata defined on an instance is not own metadata of the constructor', () => {
       class ClassWithMetadata { }
 
       const instance = new ClassWithMetadata()
 
       container.defineMetadata('own-key', 'value', instance)
 
-      expect(container.hasOwnMetadata('own-key', ClassWithMetadata)).toBe(true)
-      expect(container.getOwnMetadata('own-key', ClassWithMetadata)).toBe('value')
+      expect(container.hasOwnMetadata('own-key', ClassWithMetadata)).toBe(false)
+      expect(container.getOwnMetadata('own-key', ClassWithMetadata)).toBeUndefined()
     })
   })
 
@@ -259,7 +259,7 @@ describe('MetadataContainer Class', () => {
             expect(error.code).toBe(ReflectMetadataErrorCode.TARGET_METADATA_INVALID)
             throw error
           }
-        }, `expected "${String(value)}" (${typeof value}) to throw an error`)
+        }, `expected "${describeTarget(value)}" (${typeof value}) to throw an error`)
           .toThrow(InvalidTargetReflectMetadataException)
       })
     })
@@ -268,7 +268,7 @@ describe('MetadataContainer Class', () => {
       VALID_TARGET_LIST.forEach(value => {
         expect(() => {
           container.defineMetadata('key', 'value', value)
-        }, `expected "${String(value)}" (${typeof value}) not to throw an error`)
+        }, `expected "${describeTarget(value)}" (${typeof value}) not to throw an error`)
           .not.toThrow(InvalidTargetReflectMetadataException)
       })
     })

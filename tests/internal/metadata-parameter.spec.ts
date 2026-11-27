@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test } from 'vitest'
 import { MetadataContainer } from '@core/container'
 import { ReflectMetadataErrorCode } from '@exceptions/code-errors'
 import { InvalidTargetReflectMetadataException } from '@exceptions/invalid-target.exception'
-import { INVALID_TARGET_LIST, VALID_TARGET_LIST } from '@tests/common/types-target-list'
+import { describeTarget, INVALID_TARGET_LIST, VALID_TARGET_LIST } from '@tests/common/types-target-list'
 
 describe('MetadataContainer Parameter', () => {
   let container: MetadataContainer
@@ -278,6 +278,57 @@ describe('MetadataContainer Parameter', () => {
     })
   })
 
+  describe('Parameter extension', () => {
+    test('parameter metadata does not collide with member metadata of the same name', () => {
+      class Subject {
+        m(param: any) { }
+      }
+
+      container.defineMetadata('key', 'member', Subject.prototype, 'm')
+      container.defineMetadata('key', 'param', Subject.prototype, 'm', 0)
+
+      expect(container.getOwnMetadata('key', Subject.prototype, 'm')).toBe('member')
+      expect(container.getOwnMetadata('key', Subject.prototype, 'm', 0)).toBe('param')
+    })
+
+    test('constructor parameter metadata is inherited by a subclass', () => {
+      class Parent { }
+      class Child extends Parent { }
+
+      container.defineMetadata('key', 'value', Parent, undefined, 0)
+
+      expect(container.getMetadata('key', Child, undefined, 0)).toBe('value')
+      expect(container.hasOwnMetadata('key', Child, undefined, 0)).toBe(false)
+    })
+
+    test('key enumeration and delete accept a parameter index', () => {
+      class Subject {
+        m(first: any, second: any) { }
+      }
+
+      container.defineMetadata('k1', 'a', Subject.prototype, 'm', 1)
+      container.defineMetadata('k2', 'b', Subject.prototype, 'm', 1)
+
+      expect(container.getOwnMetadataKeys(Subject.prototype, 'm', 1)).toEqual(['k1', 'k2'])
+      expect(container.getMetadataKeys(Subject.prototype, 'm', 0)).toEqual([])
+      expect(container.deleteMetadata('k1', Subject.prototype, 'm', 1)).toBe(true)
+      expect(container.deleteMetadata('k1', Subject.prototype, 'm', 1)).toBe(false)
+    })
+
+    test('symbol-named methods with equal descriptions keep separate parameters', () => {
+      const first = Symbol('same')
+      const second = Symbol('same')
+
+      class Subject { }
+
+      container.defineMetadata('key', 'first', Subject.prototype, first, 0)
+      container.defineMetadata('key', 'second', Subject.prototype, second, 0)
+
+      expect(container.getOwnMetadata('key', Subject.prototype, first, 0)).toBe('first')
+      expect(container.getOwnMetadata('key', Subject.prototype, second, 0)).toBe('second')
+    })
+  })
+
   describe('Targets with varied types', () => {
     test('should throw an exception when attempting to register metadata with an invalid target', () => {
       INVALID_TARGET_LIST.forEach(value => {
@@ -288,7 +339,7 @@ describe('MetadataContainer Parameter', () => {
             expect(error.code).toBe(ReflectMetadataErrorCode.TARGET_METADATA_INVALID)
             throw error
           }
-        }, `expected "${String(value)}" (${typeof value}) to throw an error`)
+        }, `expected "${describeTarget(value)}" (${typeof value}) to throw an error`)
           .toThrow(InvalidTargetReflectMetadataException)
       })
     })
@@ -297,7 +348,7 @@ describe('MetadataContainer Parameter', () => {
       VALID_TARGET_LIST.forEach(value => {
         expect(() => {
           container.defineMetadata('key', 'value', value, 'method', 0)
-        }, `expected "${String(value)}" (${typeof value}) not to throw an error`)
+        }, `expected "${describeTarget(value)}" (${typeof value}) not to throw an error`)
           .not.toThrow(InvalidTargetReflectMetadataException)
       })
     })

@@ -1,19 +1,20 @@
 {
   "name": "@esliph/metadata",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "test": "vitest",
-    "build": "rm -rf dist && tsc && tsc-alias",
-    "prepublishOnly": "npm run build -- -p tsconfig.build.json"
+    "build": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
+    "check:package": "node scripts/check-package.mjs"
   },
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
-      "import": "./dist/index.js",
-      "types": "./index.d.ts"
+      "import": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
@@ -41,6 +42,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
     "prettier": "^3.7.4",
+    "reflect-metadata": "0.2.2",
     "tsc-alias": "^1.8.16",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.49.0",

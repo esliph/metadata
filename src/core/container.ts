@@ -1,156 +1,245 @@
-import { MetadataKey, MetadataTarget, MetadataValue } from '@contracts/metadata'
+import { MetadataKey, MetadataTarget, MetadataValue, PropertyKey } from '@contracts/metadata'
+import { DecoratorRecord } from '@core/decorator-record'
+import { MetadataSlot, StoredPropertyKey, TargetMetadata } from '@core/target-metadata'
 import { assertValidTarget } from '@core/target'
+import { SYMBOL_METADATA } from '@polyfills/symbol-metadata'
+import { toPropertyKey } from '@utils/property-key'
+import { ordinaryGetPrototypeOf } from '@utils/prototype'
 
 export class MetadataContainer {
 
-  protected static readonly NOT_FOUND = Symbol('NOT_FOUND')
+  protected storage = new WeakMap<object, TargetMetadata>()
 
-  protected storage = new WeakMap<object, Map<any, any>>()
+  protected readonly recordsKey = Symbol('@esliph/metadata:records')
 
-  protected lookupCache = new WeakMap<object, Map<any, any>>()
+  protected nextStamp = 0
 
-  defineMetadata(key: MetadataKey, value: MetadataValue, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number) {
-    const normalized = MetadataContainer.normalizeTarget(target, propertyKey)
+  protected pendingRecords = 0
 
-    const map = this.getOrCreateMap(normalized)
-    const compositeKey = MetadataContainer.makeCompositeKey(key, propertyKey, parameterIndex)
+  defineMetadata(key: MetadataKey, value: MetadataValue, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number): void {
+    const member = this.resolveMember(target, propertyKey)
 
-    map.set(compositeKey, value)
-    this.lookupCache.delete(normalized)
+    this.drain(target)
+
+    const slot = this.getOrCreateTargetMetadata(target).getOrCreateSlot(member, parameterIndex)
+
+    slot.values.set(key, value)
+
+    this.markExplicitWrite(slot, key)
   }
 
-  deleteMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number) {
-    const normalized = MetadataContainer.normalizeTarget(target, propertyKey)
-    const map = this.storage.get(normalized)
+  deleteMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number): boolean {
+    const member = this.resolveMember(target, propertyKey)
 
-    if (!map) {
-      return
+    this.drain(target)
+
+    const stamping = this.pendingRecords > 0
+    const targetMetadata = stamping ? this.getOrCreateTargetMetadata(target) : this.storage.get(target)
+    const slot = stamping ? targetMetadata!.getOrCreateSlot(member, parameterIndex) : targetMetadata?.getSlot(member, parameterIndex)
+
+    if (!targetMetadata || !slot) {
+      return false
     }
 
-    const compositeKey = MetadataContainer.makeCompositeKey(key, propertyKey, parameterIndex)
+    const removed = slot.values.delete(key)
 
-    map.delete(compositeKey)
-    this.lookupCache.delete(normalized)
-  }
+    this.markExplicitWrite(slot, key)
 
-  hasMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number) {
-    return this.getMetadata(key, target, propertyKey, parameterIndex) !== undefined
-  }
+    targetMetadata.removeSlotIfEmpty(member, parameterIndex)
 
-  hasOwnMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number) {
-    return this.getOwnMetadata(key, target, propertyKey, parameterIndex) !== undefined
-  }
-
-  getMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number) {
-    const normalized = MetadataContainer.normalizeTarget(target, propertyKey)
-    const compositeKey = MetadataContainer.makeCompositeKey(key, propertyKey, parameterIndex)
-
-    const cache = this.lookupCache.get(normalized)
-
-    if (cache && cache.has(compositeKey)) {
-      const cached = cache.get(compositeKey)
-
-      return cached === MetadataContainer.NOT_FOUND ? undefined : cached
+    if (targetMetadata.isEmpty) {
+      this.storage.delete(target)
     }
 
-    let current: any = normalized
+    return removed
+  }
 
-    while (current) {
-      const containerMap = this.storage.get(current)
+  hasMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number): boolean {
+    const member = this.resolveMember(target, propertyKey)
 
-      if (containerMap && containerMap.has(compositeKey)) {
-        const found = containerMap.get(compositeKey)
-        const newCache = this.getOrCreateCacheMap(normalized)
+    for (let current: object | null = target as object; current !== null; current = ordinaryGetPrototypeOf(current)) {
+      this.drain(current)
 
-        newCache.set(compositeKey, found)
-        return found
+      if (this.storage.get(current)?.getSlot(member, parameterIndex)?.values.has(key)) {
+        return true
       }
-
-      current = Object.getPrototypeOf(current)
     }
 
-    const newCache = this.getOrCreateCacheMap(normalized)
+    return false
+  }
 
-    newCache.set(compositeKey, MetadataContainer.NOT_FOUND)
+  hasOwnMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number): boolean {
+    const member = this.resolveMember(target, propertyKey)
+
+    this.drain(target)
+
+    return this.storage.get(target)?.getSlot(member, parameterIndex)?.values.has(key) ?? false
+  }
+
+  // There is no lookup cache: a write on any ancestor and Object.setPrototypeOf would need invalidation across every descendant
+  getMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number): any {
+    const member = this.resolveMember(target, propertyKey)
+
+    for (let current: object | null = target as object; current !== null; current = ordinaryGetPrototypeOf(current)) {
+      this.drain(current)
+
+      const values = this.storage.get(current)?.getSlot(member, parameterIndex)?.values
+
+      if (values?.has(key)) {
+        return values.get(key)
+      }
+    }
 
     return undefined
   }
 
-  getOwnMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number) {
-    const normalized = MetadataContainer.normalizeTarget(target, propertyKey)
-    const containerMap = this.storage.get(normalized)
+  getOwnMetadata(key: MetadataKey, target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number): any {
+    const member = this.resolveMember(target, propertyKey)
 
-    if (!containerMap) {
+    this.drain(target)
+
+    return this.storage.get(target)?.getSlot(member, parameterIndex)?.values.get(key)
+  }
+
+  getMetadataKeys(target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number): any[] {
+    const member = this.resolveMember(target, propertyKey)
+    const seen = new Set<MetadataKey>()
+    const keys: MetadataKey[] = []
+
+    for (let current: object | null = target as object; current !== null; current = ordinaryGetPrototypeOf(current)) {
+      this.drain(current)
+
+      const values = this.storage.get(current)?.getSlot(member, parameterIndex)?.values
+
+      if (!values) {
+        continue
+      }
+
+      for (const key of values.keys()) {
+        if (!seen.has(key)) {
+          seen.add(key)
+          keys.push(key)
+        }
+      }
+    }
+
+    return keys
+  }
+
+  getOwnMetadataKeys(target: MetadataTarget, propertyKey?: PropertyKey, parameterIndex?: number): any[] {
+    const member = this.resolveMember(target, propertyKey)
+
+    this.drain(target)
+
+    const values = this.storage.get(target)?.getSlot(member, parameterIndex)?.values
+
+    return values ? Array.from(values.keys()) : []
+  }
+
+  enqueueDecoratorRecord(metadataObject: object, record: Omit<DecoratorRecord, 'stamp'>): void {
+    // context.metadata inherits from the parent class's object, so the array must be an own property
+    let records: DecoratorRecord[] | undefined = Object.prototype.hasOwnProperty.call(metadataObject, this.recordsKey)
+      ? (metadataObject as any)[this.recordsKey]
+      : undefined
+
+    if (!records) {
+      records = []
+
+      Object.defineProperty(metadataObject, this.recordsKey, { value: records, configurable: true, writable: true, enumerable: false })
+    }
+
+    records.push({ ...record, stamp: ++this.nextStamp })
+
+    this.pendingRecords += 1
+  }
+
+  protected resolveMember(target: MetadataTarget, propertyKey: PropertyKey | undefined): StoredPropertyKey | undefined {
+    assertValidTarget(target)
+
+    return propertyKey === undefined ? undefined : toPropertyKey(propertyKey)
+  }
+
+  protected getOrCreateTargetMetadata(target: object) {
+    let targetMetadata = this.storage.get(target)
+
+    if (!targetMetadata) {
+      targetMetadata = new TargetMetadata()
+
+      this.storage.set(target, targetMetadata)
+    }
+
+    return targetMetadata
+  }
+
+  // A record can only replay over a write made after it while its class is still undrained, and the only window for that is a class
+  // decorator body, before Symbol.metadata is attached. With no pending record, no later record can target an existing slot, so the stamp is dropped.
+  protected markExplicitWrite(slot: MetadataSlot, key: MetadataKey) {
+    if (this.pendingRecords > 0) {
+      slot.stamps.set(key, ++this.nextStamp)
+
+      return
+    }
+
+    slot.stamps.delete(key)
+  }
+
+  // Never calls object.hasOwnProperty: the object may have no Object.prototype
+  protected ownerOf(object: object): Function | undefined {
+    if (typeof object === 'function') {
+      return this.constructorOfPrototype((object as Function).prototype) ?? object
+    }
+
+    return this.constructorOfPrototype(object)
+  }
+
+  // A class and its prototype must resolve to the same owner, or a Proxy returned by a class decorator makes static records depend on the order of reads
+  protected constructorOfPrototype(prototype: unknown): Function | undefined {
+    if (typeof prototype !== 'object' || prototype === null) {
       return undefined
     }
 
-    const compositeKey = MetadataContainer.makeCompositeKey(key, propertyKey, parameterIndex)
+    const constructor = Object.getOwnPropertyDescriptor(prototype, 'constructor')?.value
 
-    return containerMap.get(compositeKey)
+    return typeof constructor === 'function' && constructor.prototype === prototype ? constructor : undefined
   }
 
-  protected getOrCreateMap(target: object) {
-    let map = this.storage.get(target)
-
-    if (!map) {
-      map = new Map()
-
-      this.storage.set(target, map)
+  protected drain(object: object) {
+    if (this.pendingRecords === 0) {
+      return
     }
 
-    return map
+    const owner = this.ownerOf(object)
+
+    if (!owner) {
+      return
+    }
+
+    const metadataObject = Object.getOwnPropertyDescriptor(owner, SYMBOL_METADATA)?.value
+
+    if (typeof metadataObject !== 'object' || metadataObject === null || !Object.prototype.hasOwnProperty.call(metadataObject, this.recordsKey)) {
+      return
+    }
+
+    const records: DecoratorRecord[] = metadataObject[this.recordsKey]
+
+    delete metadataObject[this.recordsKey]
+
+    this.pendingRecords -= records.length
+
+    for (const record of records) {
+      this.replay(owner, record)
+    }
   }
 
-  protected getOrCreateCacheMap(target: object) {
-    let map = this.lookupCache.get(target)
+  protected replay(owner: Function, record: DecoratorRecord) {
+    const target = record.placement === 'static' ? owner : owner.prototype
+    const slot = this.getOrCreateTargetMetadata(target).getOrCreateSlot(record.propertyKey, record.parameterIndex)
+    const stamp = slot.stamps.get(record.key)
 
-    if (!map) {
-      map = new Map()
-
-      this.lookupCache.set(target, map)
+    if (stamp !== undefined && stamp > record.stamp) {
+      return
     }
 
-    return map
-  }
-
-  protected static makeCompositeKey(key: MetadataKey, propertyKey?: PropertyKey, parameterIndex?: number) {
-    if (propertyKey === undefined) {
-      if (parameterIndex == undefined) {
-        return key
-      }
-
-      propertyKey = 'constructor'
-    }
-
-    const prop = String(propertyKey)
-    const keyNormalized = typeof key === 'symbol' ? key.toString() : String(key)
-
-    if (parameterIndex === undefined) {
-      return prop + '|' + keyNormalized
-    }
-
-    return prop + '|param:' + String(parameterIndex) + '|' + keyNormalized
-  }
-
-  protected static normalizeTarget(target: MetadataTarget, propertyKey?: PropertyKey) {
-    assertValidTarget(target)
-
-    if (propertyKey !== undefined) {
-      if (typeof target === 'function') {
-        if (String(propertyKey) === 'constructor') {
-          return target as object
-        }
-
-        return target.prototype
-      }
-
-      return target as object
-    }
-
-    if (typeof target === 'object' && target !== null && (target as any).constructor) {
-      return (target as any).constructor
-    }
-
-    return target as object
+    slot.values.set(record.key, record.value)
   }
 }
