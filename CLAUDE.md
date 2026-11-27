@@ -17,14 +17,14 @@ npx vitest run                                  # single run, with coverage
 npx vitest run tests/public/decorator.spec.ts -t "class decorator" --coverage.enabled=false   # one test
 npm run build                                   # removes dist, then tsc and tsc-alias (works in any shell)
 npm run check:package                           # checks the built package; run npm run build first
-npx eslint .                                    # there is no lint script
+npm run lint                                    # ESLint
 npx tsc -p tests/tsconfig.json --noEmit         # type-check src + tests (Vitest does not check types)
 ```
 
 - Coverage is enabled in `vitest.config.ts` and written to `reports/tests/coverage`.
 - `tests/emit` compiles fixtures with `tsc` and runs them in a fresh Node process. It is the only test that covers the `Symbol.metadata` polyfill, because Vitest compiles with esbuild.
 - `tests/parity` runs each scenario on the library and on `reflect-metadata/no-conflict` (devDependency, test oracle only). Create metadata keys once per test, outside the scenario, and targets inside it: the oracle store is process-global.
-- `.github/workflows/publish.yml` publishes to npm when a release is published on GitHub (Node 20). It runs lint, type check, tests, build and `npm run check:package` before `npm publish`.
+- `.github/workflows/publish.yml` publishes to npm when a release is published on GitHub (Node 24). It runs lint, type check, tests, build and `npm run check:package` before `npm publish`.
 
 ## Architecture
 
