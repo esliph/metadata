@@ -1,35 +1,58 @@
 # Decorators and initializers
 
-Class metadata is available as soon as the class is defined. Instance-member metadata appears only when the first instance is created. The difference comes from what a standard decorator receives, not from a choice in this library.
+Member decorators record their metadata when the class is defined, and the store copies the records the first time it touches the class. Earlier versions wrote member metadata through initializers, which is why this page still carries the name. This page explains what a standard decorator receives, how the library gets from a decorator to the class, and the one window where the metadata is not visible.
 
 ## What a standard decorator receives
 
-TypeScript 5.0 implements the TC39 decorators proposal. A decorator is a function called with two arguments: the decorated value and a context object.
+TypeScript 5 implements the TC39 decorators proposal. A decorator is a function called with two arguments: the decorated value and a context object.
 
-- A class decorator receives the class itself. `metadata` writes to it right away, during class definition.
+- A class decorator receives the class itself. `metadata` writes to it right away.
 - A member decorator receives the member (the method, getter or setter function, `{ get, set }` for an `accessor`, or `undefined` for a field) and a context with its name and whether it is static. It does not receive the class or the prototype.
 
 The legacy decorators (`experimentalDecorators`) worked differently: a member decorator received the prototype as its first argument and could write metadata immediately. Code written for `reflect-metadata` relies on that.
 
 ## How a member decorator reaches the class
 
-The context offers one way to reach the class: `context.addInitializer(fn)`, which registers an initializer, a function the runtime calls later:
+The context offers two ways to reach the class:
 
-| Member   | `fn` runs                | `this` is        |
-| -------- | ------------------------ | ---------------- |
-| Static   | During class definition  | The class        |
-| Instance | During each construction | The new instance |
+- `context.addInitializer(fn)` registers a function the runtime calls later. For a static member it runs during class definition, with `this` set to the class. For an instance member it runs on every construction, with `this` set to the new instance.
+- `context.metadata` (TypeScript 5.2 and later) is one plain object per class, shared by all the decorators of that class. The compiler attaches it to the class as `Class[Symbol.metadata]` after the class decorators have run. It inherits from the metadata object of the parent class.
 
-`metadata` and `metadataParam` register an initializer that calls `defineMetadata` with the member name and, as the target, `this` for static members (the class) or `this.constructor.prototype` for instance members. Both resolve to the class prototype, because a class with a member name resolves to its prototype ([Metadata locations](../reference/metadata-locations.md)). That is why static-member metadata exists at definition time, and instance-member metadata only after `new`.
+`metadata` and `metadataParam` use `context.metadata`. Each member decorator appends a record to an array on that object, under a symbol private to the store that created the decorator. The record holds the placement (`'static'` or `'instance'`), the member name, the key, the value and the parameter index. Two stores never see each other's records.
 
-Writing to `this.constructor.prototype`, and not to the prototype of the class where the decorator appears, has a consequence for inheritance. Creating an instance of a subclass writes the metadata to the subclass prototype. The subclass then owns a copy, and `getOwnMetadata` on the subclass prototype finds it.
+Because `context.metadata` inherits from the parent's object, the array must be an own property of the object. Reading the inherited one would append to the parent's records.
 
-## Every instance writes again
+## The store copies the records on first access
 
-The initializer runs on every construction, so every `new` writes the same value to the same location. Writing is idempotent, so normal use sees no difference. Two effects become visible:
+The store does not copy a record when the decorator runs: the class does not exist yet. Instead, every operation checks the object it touches, and every level of a prototype-chain walk checks its own object:
 
-- A value removed with `deleteMetadata`, or replaced with `defineMetadata`, comes back at the next instantiation.
-- Each write clears the lookup cache of that prototype. See [How metadata lookup works](how-lookup-works.md#reads-are-cached).
+1. It finds the class that owns the object: the object itself when it is a function, or the `constructor` when the object is that constructor's `prototype`.
+2. If that class has its own `Symbol.metadata` object with a records array, the store removes the array and replays the records in order. A static record is written to the class, an instance record to `Class.prototype`.
+3. It then runs the operation.
+
+The decorators ran at definition, before any call the user makes, so replaying first keeps temporal order. This is why `getMetadata(key, new Subject(), 'm')` finds the metadata even when it is the first call: the chain walk reaches `Subject.prototype` and copies its records before it reads.
+
+Records replay in decorator order. For two decorators with the same key on one member, the top one runs last and wins, as with `reflect-metadata` under legacy decorators.
+
+## An explicit write wins over a later replay
+
+A `defineMetadata` or `deleteMetadata` call made after a decorator ran must not be overwritten when the store copies the older record. The store gives every record and every explicit write a sequence number, and a replayed record does not overwrite a write that has a higher number. The numbers are only kept while undrained records exist. The only moment an explicit write can happen before the records are copied is inside a class decorator body.
+
+## The class decorator body does not see member metadata
+
+The compiler attaches `Symbol.metadata` after it has run all class decorators. Inside a class decorator body, the class has no `Symbol.metadata` yet, so the store cannot find the records:
+
+- A read returns what it would return before the member decorators ran.
+- `deleteMetadata` of a pending key returns `false`.
+- An explicit write or delete there still wins over the member decorator's value, through the sequence numbers above.
+
+`context.addInitializer` on the class decorator runs after the class definition completes, when `Symbol.metadata` is attached. Reading there sees the member metadata. [Known limitations](../reference/known-limitations.md#member-metadata-is-not-visible-inside-a-class-decorator-body) has an example.
+
+## Symbol.metadata
+
+Not every runtime defines `Symbol.metadata`. When it is missing, `tsc` emits code that leaves `context.metadata` undefined. The library defines it when it loads: `Symbol.metadata ??= Symbol.for('Symbol.metadata')`. `Symbol.for` is the key esbuild falls back to, so classes compiled by esbuild and by `tsc` share one symbol.
+
+The definition must run before the decorated class is defined, so import the library before such classes. A member decorator that finds `context.metadata` undefined throws `DECORATOR_METADATA_UNAVAILABLE`. Vitest compiles with esbuild, which works without the polyfill, so a dedicated test compiles fixtures with `tsc` and runs them in a fresh process (`tests/emit`).
 
 ## Parameters have no decorator
 
@@ -37,10 +60,11 @@ The TC39 proposal has no parameter decorators. Writing `@Inject() logger: Logger
 
 ## Practical consequences
 
-- Read instance-member metadata after creating an instance, or write it with `defineMetadata` when it must exist earlier.
-- Prefer class decorators and static members for metadata that a framework reads at startup, before it creates instances.
+- Decorator metadata exists after the class definition. No instance is needed, and creating instances writes nothing.
+- Private members cannot carry the decorators: their name (`'#x'`) would collide with a public member named `'#x'`.
+- Read member metadata inside a class decorator through `context.addInitializer`.
 
 ## Related pages
 
-- [Decorators](../reference/decorators.md): when each kind of decorator writes, and where.
-- [Design decisions](architecture/design-decisions.md#write-member-metadata-through-initializers): why initializers and not another mechanism.
+- [Decorators](../reference/decorators.md): where each decorator stores its metadata.
+- [Design decisions](architecture/design-decisions.md#record-member-metadata-through-contextmetadata): why `context.metadata` and not initializers.

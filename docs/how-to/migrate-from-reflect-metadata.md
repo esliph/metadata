@@ -2,6 +2,8 @@
 
 This guide shows how to move a TypeScript project from `reflect-metadata` and legacy decorators to `@esliph/metadata` and standard decorators. It assumes the project uses `Reflect.defineMetadata`, `Reflect.getMetadata` or `@Reflect.metadata` today.
 
+The storage operations behave as in `reflect-metadata` 0.2.2: `defineMetadata`, `hasMetadata`, `hasOwnMetadata`, `getMetadata`, `getOwnMetadata`, `getMetadataKeys`, `getOwnMetadataKeys`, `deleteMetadata` and `decorate` return the same results, or both throw a `TypeError`. The differences are listed in step 4.
+
 ## 1. Replace the polyfill import
 
 `reflect-metadata` adds methods to the global `Reflect`. This library does not. Remove the side-effect import and import `Reflect` in every module that uses it:
@@ -16,9 +18,11 @@ import { Reflect } from '@esliph/metadata'
 
 A module that uses `Reflect.getMetadata` without the import no longer compiles.
 
+Import the library before any decorated class is defined. The import defines `Symbol.metadata` when the runtime lacks it, and the decorators need it.
+
 ## 2. Switch to standard decorators
 
-In `tsconfig.json`, remove `experimentalDecorators` and `emitDecoratorMetadata`, or set both to `false`. TypeScript 5.0 or later is required.
+In `tsconfig.json`, remove `experimentalDecorators` and `emitDecoratorMetadata`, or set both to `false`. TypeScript 5.2 or later is required.
 
 Standard decorators do not emit `design:type`, `design:paramtypes` or `design:returntype`. Code that reads them, such as a dependency injector that resolves constructor types, needs explicit metadata instead (step 3).
 
@@ -65,36 +69,16 @@ const service = create(UserService)
 
 `resolve` is your container's function that returns an instance for a class.
 
-## 4. Replace key enumeration
+## 4. Review the differences
 
-`getMetadataKeys` and `getOwnMetadataKeys` do not exist. Store one object under one key instead of many keys, or keep the list of keys in your own module:
+| Behavior                       | reflect-metadata                                          | @esliph/metadata                                                                                          |
+| ------------------------------ | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Global `Reflect`               | `import 'reflect-metadata'` adds the methods              | Exports its own `Reflect`; the global one is untouched                                                    |
+| Decorators                     | Legacy (`experimentalDecorators`), with `design:*` types  | Standard decorators only; no `design:*` metadata                                                          |
+| `decorate`                     | Legacy call shape                                         | Same call shape. It is a plain function call and does not need `experimentalDecorators`                   |
+| Extensions                     | —                                                         | `parameterIndex` as the last argument, `metadataParam`, isolated stores (`new ReflectMetadata()`), `MetadataContainer` export |
+| Errors                         | `TypeError`                                               | `ReflectMetadataException` and subclasses: `TypeError`s with a `code`                                     |
+| Member metadata in a class decorator body | Visible, because member decorators run first    | Not visible yet; read inside `context.addInitializer`. See [Known limitations](../reference/known-limitations.md#member-metadata-is-not-visible-inside-a-class-decorator-body) |
+| Decorator on a private member  | Not applicable                                            | Throws `PRIVATE_MEMBER_UNSUPPORTED`                                                                       |
 
-```ts
-const routeKeys = new Set<string>()
-
-export function defineRouteMetadata(key: string, value: unknown, target: object, method: string) {
-  routeKeys.add(key)
-  Reflect.defineMetadata(key, value, target, method)
-}
-
-export function getRouteMetadataKeys(target: object, method: string) {
-  return [...routeKeys].filter(key => Reflect.hasMetadata(key, target, method))
-}
-```
-
-## 5. Read instance-member metadata after instantiation
-
-With legacy decorators, metadata on instance members exists as soon as the class is defined. Here it is written when the first instance is created. Code that inspects a class at startup, before creating any instance, must either create an instance first or write the metadata with `defineMetadata`. See [Decorators and initializers](../explanation/decorators-and-initializers.md).
-
-## 6. Review the behavior differences
-
-| Behavior                                          | reflect-metadata                                                           | @esliph/metadata                                                                                         |
-| ------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `defineMetadata(k, v, Class, 'member')`           | Stores on the class object, for a static member                            | Stores on `Class.prototype`; static and instance members of the same name share it                       |
-| `getMetadata(k, instance)` with class metadata    | Not found: the lookup walks the instance's prototypes, not its constructor | Found: an instance without `propertyKey` resolves to its class                                           |
-| `hasMetadata` on a key whose value is `undefined` | `true`                                                                     | `false`                                                                                                  |
-| `deleteMetadata` return value                     | `boolean`                                                                  | `undefined`                                                                                              |
-| Invalid target                                    | `TypeError`                                                                | `InvalidTargetReflectMetadataException`; arrow, `async`, generator and bound functions are also rejected |
-| Key types                                         | Any value                                                                  | `string` or `symbol` (`MetadataKey`); the decorators accept `any`                                        |
-
-Search the code for each row before switching: `hasMetadata` checks on `undefined` values, `deleteMetadata` results used as booleans, and static-member metadata that must stay separate from an instance member of the same name.
+Search the code for class decorators that read member metadata of the class they decorate, and for decorators on private members, before switching.

@@ -1,65 +1,60 @@
 # Metadata locations
 
-A location is the place where one value is stored for one key. The library derives it from `target`, `propertyKey` and `parameterIndex`. Different calls can resolve to the same location.
+A location is the place where one value is stored for one key. The library derives it from `target`, `propertyKey` and `parameterIndex`. It uses `target` exactly as given: it never replaces a class, prototype or instance with another object.
 
 ## Location table
 
-| `target`                                         | `propertyKey`   | `parameterIndex` | Location                                                                          |
-| ------------------------------------------------ | --------------- | ---------------- | --------------------------------------------------------------------------------- |
-| Class                                            | —               | —                | Class                                                                             |
-| Prototype or instance                            | —               | —                | Its class (`target.constructor`)                                                  |
-| Class, prototype or instance                     | —               | `n`              | Constructor parameter `n` of the class                                            |
-| Class                                            | `'constructor'` | `n`              | Constructor parameter `n` of the class                                            |
-| Class                                            | `'constructor'` | —                | Member `constructor` of the class                                                 |
-| Class                                            | member name     | —                | Member of `Class.prototype`                                                       |
-| Prototype                                        | member name     | —                | Member of the prototype                                                           |
-| Instance                                         | member name     | —                | Member of the instance itself                                                     |
-| Class or prototype                               | member name     | `n`              | Parameter `n` of the member of `Class.prototype`                                  |
-| Instance                                         | member name     | `n`              | Parameter `n` of the member of the instance itself                                |
-| Object literal, array or other built-in object   | —               | —                | Its constructor (`Object`, `Array`, `Date`...), shared by every object it created |
-| Object without prototype (`Object.create(null)`) | —               | —                | The object itself                                                                 |
+| `target`            | `propertyKey` | `parameterIndex` | Location                                                      |
+| ------------------- | ------------- | ---------------- | ------------------------------------------------------------- |
+| Any object          | —             | —                | The object itself                                             |
+| Any object          | member name   | —                | Member of that object                                         |
+| Any object          | —             | `n`              | Constructor parameter `n` of that object (a class, normally)  |
+| Any object          | member name   | `n`              | Parameter `n` of the member of that object                    |
 
-## Equivalent calls
+`propertyKey` goes through `ToPropertyKey`: a symbol stays a symbol, any other value becomes a string. `1` and `'1'` are the same member. Two symbols with the same description are different members.
 
-Each group reads and writes the same location:
+Each location holds its own keys. Member and parameter locations of one object never collide with each other or with the object's own metadata.
 
-| Location                                    | Calls                                                                                                  |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Class metadata                              | `(key, Class)`, `(key, Class.prototype)`, `(key, new Class())`                                         |
-| Member metadata                             | `(key, Class, 'name')`, `(key, Class.prototype, 'name')`                                               |
-| Constructor parameter                       | `(key, Class, undefined, n)`, `(key, Class.prototype, undefined, n)`, `(key, Class, 'constructor', n)` |
-| Static and instance member of the same name | `(key, Class, 'name')` for both                                                                        |
+## Common targets
+
+| What you want                | Call                                       |
+| ---------------------------- | ------------------------------------------ |
+| Class metadata               | `(key, Class)`                             |
+| Instance method or field     | `(key, Class.prototype, 'name')`           |
+| Static method or field       | `(key, Class, 'name')`                     |
+| Constructor parameter        | `(key, Class, undefined, n)`               |
+| Method parameter             | `(key, Class.prototype, 'name', n)`        |
+| Metadata of one instance     | `(key, instance)` or `(key, instance, 'name')` |
 
 ## Separate locations
 
-These calls look alike but resolve to different locations:
+These calls look alike and are all different:
 
-| Call                          | Not the same as                                                                                                                                                                        |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `(key, instance, 'name')`     | `(key, Class.prototype, 'name')`. A value stored on the instance is not visible from the prototype. A value stored on the prototype is visible from the instance, through inheritance. |
-| `(key, Class, 'constructor')` | `(key, Class)`                                                                                                                                                                         |
-| `(key, Class, 'name')`        | `(key, Class)`                                                                                                                                                                         |
-| `(key, Class, 'name', 0)`     | `(key, Class, 'name')`                                                                                                                                                                 |
+| Call                       | Not the same as                                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `(key, instance)`          | `(key, Class)` and `(key, Class.prototype)`. A value on the instance is not visible from the class.      |
+| `(key, Class, 'name')`     | `(key, Class.prototype, 'name')`. Static and instance members with the same name are separate.           |
+| `(key, Class, 'name')`     | `(key, Class)`                                                                                           |
+| `(key, Class, 'name', 0)`  | `(key, Class, 'name')`                                                                                   |
 
 ## Inheritance
 
-`getMetadata` and `hasMetadata` start at the location's object and follow `Object.getPrototypeOf` until they find the key:
+`getMetadata`, `hasMetadata` and `getMetadataKeys` start at the target and follow the prototype chain until the end:
 
-| Location                           | Lookup order                                            |
-| ---------------------------------- | ------------------------------------------------------- |
-| Class                              | `Sub`, `Base`, `Function.prototype`, `Object.prototype` |
-| Member or parameter on a prototype | `Sub.prototype`, `Base.prototype`, `Object.prototype`   |
-| Member on an instance              | The instance, `Class.prototype`, parent prototypes      |
+| Target                    | Lookup order                                                          |
+| ------------------------- | --------------------------------------------------------------------- |
+| Class                     | `Sub`, `Base`, `Function.prototype`, `Object.prototype`               |
+| Prototype                 | `Sub.prototype`, `Base.prototype`, `Object.prototype`                 |
+| Instance                  | The instance, `Class.prototype`, parent prototypes                    |
 
-`getOwnMetadata`, `hasOwnMetadata`, `defineMetadata` and `deleteMetadata` use only the location's object.
+A key is present when it is stored, even with the value `undefined`. `getMetadata` and `hasMetadata` stop at the first level where the key is present, so an own `undefined` hides the parent's value.
+
+For an ES5-style subclass, whose constructor does not inherit from its parent through `Object.setPrototypeOf`, the walk follows the `constructor` of its `prototype`'s prototype, as `reflect-metadata` does.
+
+`getOwnMetadata`, `hasOwnMetadata`, `getOwnMetadataKeys`, `defineMetadata` and `deleteMetadata` use only the target.
 
 ## Valid targets
 
-| Valid                                                                           | Invalid                                                                                 |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Classes                                                                         | `null`, `undefined`                                                                     |
-| Functions declared with `function`                                              | Booleans, numbers, strings, symbols, bigints                                            |
-| Objects: instances, prototypes, arrays, `Date`, `Map`, frozen objects, literals | Arrow functions, `async` functions, generator functions, bound functions                |
-|                                                                                 | Methods, such as `Class.prototype.find`: pass the prototype and the method name instead |
+Valid: any object (`typeof` is `'object'` and not `null`) and any function. That includes classes, arrow, `async`, generator and bound functions, instances, prototypes, arrays, `Date`, `Map`, frozen objects, object literals, `Object.create(null)` and `Function.prototype`.
 
-An invalid target throws [`InvalidTargetReflectMetadataException`](exceptions.md). `async` generator functions pass the check and are accepted, unlike other generator functions.
+Invalid: `null`, `undefined`, booleans, numbers, strings, symbols and bigints. An invalid target throws [`InvalidTargetReflectMetadataException`](exceptions.md).

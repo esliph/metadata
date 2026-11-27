@@ -1,72 +1,66 @@
 # Storage model
 
-This page is for contributors. It describes the data structures of `MetadataContainer` (`src/core/container.ts`), the two functions that map a call onto them, the algorithm of each operation and what each one costs. Statements about cost come from reading the code; the repository has no benchmark, so none of them is measured.
+This page is for contributors. It describes the data structures of `MetadataContainer` (`src/core/container.ts`), the algorithm of each operation and what each one costs. Statements about cost come from reading the code; the repository has no benchmark, so none of them is measured.
 
 ## Data structures
 
 ```ts
-storage: WeakMap<object, Map<compositeKey, value>>
-lookupCache: WeakMap<object, Map<compositeKey, value | NOT_FOUND>>
+storage: WeakMap<object, TargetMetadata>
+
+class TargetMetadata {
+  members: Map<string | symbol | undefined, MetadataSlot>
+  parameters: Map<string | symbol | undefined, Map<number, MetadataSlot>>
+}
+
+class MetadataSlot {
+  values: Map<key, value>
+  stamps: Map<key, number>
+}
 ```
 
-- `storage` holds the metadata. The outer key is the owning object (a class, a prototype or another object). The inner map holds every entry of that object: class-level keys, member keys and parameter keys, distinguished by the composite key.
-- `lookupCache` holds results of `getMetadata` (and therefore `hasMetadata`), keyed by the object the lookup started from. `NOT_FOUND` is a `protected static` `Symbol` that records a miss, so that a cached miss differs from "not cached".
-- Both outer maps are `WeakMap`s: they do not keep the owning object alive. The inner `Map`s and the stored values live as long as the owning object.
+- `storage` holds the metadata. The outer key is the target exactly as the caller passed it. It is a `WeakMap`, so it does not keep the target alive. The inner maps and the stored values live as long as the target.
+- `members` holds one slot per member name. The key `undefined` is the target itself.
+- `parameters` holds one slot per member name and parameter index. The key `undefined` is the constructor, so `(target, undefined, 0)` is a constructor parameter.
+- `values` holds the metadata of a slot, under the keys the caller used, compared with `Map` semantics. No string is built from the member name, the index or the key, so symbols keep their identity and nothing collides.
+- `stamps` holds sequence numbers of explicit writes, only while undrained decorator records exist. See [Stamps](#stamps).
 
-## Mapping a call onto the structures
-
-Every operation calls `normalizeTarget` first. `defineMetadata` and `getMetadata` then call `makeCompositeKey`; `getOwnMetadata` and `deleteMetadata` call it only after finding the object's inner map.
-
-### normalizeTarget(target, propertyKey)
-
-1. `assertValidTarget(target)` throws `InvalidTargetReflectMetadataException` unless the target is an object, or a function with a `prototype` whose constructor is not named `GeneratorFunction`. Async generator functions pass this check.
-2. With a `propertyKey`:
-   - a function resolves to `target.prototype`, except when `propertyKey` is `'constructor'`, which keeps the function;
-   - an object stays as it is.
-3. Without a `propertyKey`:
-   - an object with a truthy `constructor` resolves to that constructor;
-   - anything else stays as it is.
-
-Step 2 makes static and instance members of the same name share one entry. Step 3 makes every object literal resolve to `Object`.
-
-### makeCompositeKey(key, propertyKey, parameterIndex)
-
-| `propertyKey` | `parameterIndex` | Composite key                                    |
-| ------------- | ---------------- | ------------------------------------------------ |
-| —             | —                | `key`, unchanged (a `Symbol` keeps its identity) |
-| —             | `n`              | `'constructor\|param:n\|' + String(key)`         |
-| `p`           | —                | `String(p) + '\|' + String(key)`                 |
-| `p`           | `n`              | `String(p) + '\|param:n\|' + String(key)`        |
-
-Converting to a string is what makes symbols with the same description collide, and what lets a `|` inside a name or key produce the same string as another combination. Both are listed in [Known limitations](../../reference/known-limitations.md#member-names-and-keys-can-collide-after-joining).
+Removing the last key of a slot removes the slot, and removing the last slot removes the `TargetMetadata`, when its `stamps` are empty too.
 
 ## Operations
 
-| Operation                       | Algorithm                                                                                                                                                          | Work per call                                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| `defineMetadata`                | Normalize, get or create the inner map, `set` the composite key, delete the whole cache map of the normalized object.                                              | Validation, one string build for members and parameters, 1–2 `WeakMap` operations, 1 `Map.set`, 1 `WeakMap.delete`. |
-| `getOwnMetadata`                | Normalize; return `undefined` if the object has no inner map; otherwise build the key and read it.                                                                 | Validation, one string build, 1 `WeakMap.get`, 1 `Map.get`.                                                         |
-| `getMetadata`, cache hit        | Normalize, build the key, read the cache map.                                                                                                                      | As `getOwnMetadata`, plus `Map.has`.                                                                                |
-| `getMetadata`, cache miss       | Walk `Object.getPrototypeOf` from the normalized object; at each level, check `storage`. Store the value or `NOT_FOUND` in the cache of the starting object.       | 1 `WeakMap.get` and 1 `Map.has` per level, plus one cache insertion.                                                |
-| `hasMetadata`, `hasOwnMetadata` | Call the matching `get` and compare with `undefined`.                                                                                                              | Same as the `get`.                                                                                                  |
-| `deleteMetadata`                | Normalize; return if the object has no inner map, without touching the cache; otherwise delete the composite key and the whole cache map of the normalized object. | Like `defineMetadata`, without creating maps.                                                                       |
+Every operation validates the target first (`assertValidTarget`), then converts a defined `propertyKey` with `toPropertyKey`. This order matches `reflect-metadata`.
 
-Prototype chains in class hierarchies are short (a class chain ends at `Function.prototype` and `Object.prototype`), so the walk is bounded by the inheritance depth plus two.
+| Operation                                           | Algorithm                                                                                                                       | Work per call                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `defineMetadata`                                    | Drain the target, get or create the slot, `values.set`, mark the write for stamps.                                              | 1–2 `WeakMap` operations, 1–2 `Map` operations.                                  |
+| `getOwnMetadata`, `hasOwnMetadata`                  | Drain the target, read the slot of the target.                                                                                  | 1 `WeakMap.get`, 1–2 `Map` operations.                                           |
+| `getOwnMetadataKeys`                                | Drain the target, copy the slot's keys.                                                                                         | As above, plus the number of keys.                                               |
+| `getMetadata`, `hasMetadata`                        | Walk `ordinaryGetPrototypeOf` from the target; at each level, drain it and check the slot with `has`. Stop at the first match.  | 1 `WeakMap.get` and 1–2 `Map` operations per level.                              |
+| `getMetadataKeys`                                   | Walk the whole chain; append each key not yet seen.                                                                             | The walk, plus a `Set` check per key.                                            |
+| `deleteMetadata`                                    | Drain the target, `values.delete`, then remove the empty slot and the empty `TargetMetadata`. Returns whether a key was removed. | As `defineMetadata`.                                                             |
 
-## Cache invalidation
+A class chain is short (it ends at `Function.prototype` and `Object.prototype`), so a walk is bounded by the inheritance depth plus two. There is no cache. See [How metadata lookup works](../how-lookup-works.md#there-is-no-cache).
 
-A cache entry on object `O` is correct only while no object on `O`'s prototype chain changes the entry's key. Writes invalidate only the object they write to, so the cache of a descendant is not cleared when an ancestor changes. That is the cause of [stale subclass lookups](../../reference/known-limitations.md#subclass-lookups-can-return-stale-values).
+## Decorator records and the drain
 
-A write also discards every cached key of its object, not only the key it wrote.
+Member decorators call `enqueueDecoratorRecord(context.metadata, record)`. The container appends the record to an array that is an own property of `context.metadata`, under `recordsKey`, a symbol created per container. It stamps the record with the next sequence number and increments `pendingRecords`.
 
-## Interaction with decorators
+`drain(object)` runs at the start of every operation on the target and at every level of a chain walk:
 
-A decorated instance member calls `defineMetadata` on the class prototype at every instantiation. Each call builds a composite key string and discards the prototype's cache map. For a class with `N` decorated instance members, one `new` performs `N` writes, and the next read of each key on that prototype walks the chain again.
+1. It returns at once when `pendingRecords` is `0`: no store-wide record waits for a copy. A decorated class that nothing touched keeps the counter above `0`, so then every operation continues with the steps below.
+2. `ownerOf(object)` finds the class: the object itself if it is a function, otherwise its own `constructor` data property when that is a function whose `prototype` is the object. It reads the property descriptor, so no getter runs, and it never calls `object.hasOwnProperty`, because the object may have no `Object.prototype`.
+3. It reads the own `Symbol.metadata` property of the class. A subclass without decorators inherits `Symbol.metadata` from its parent through static inheritance, so only an own property counts.
+4. If the metadata object has an own records array, the container removes it, decrements `pendingRecords` and replays the records in order: static records to the class, instance records to `Class.prototype`.
 
-This cost is an inference from the code. It matters only when instances are created often, for example one controller per request, and member metadata is read between creations. A benchmark that creates instances of a class with several decorated members, interleaved with `getMetadata` reads, would confirm or rule it out.
+### Stamps
+
+A replayed record writes `values.set(key, value)` unless the slot has a stamp for the key that is higher than the record's. Explicit `defineMetadata` and `deleteMetadata` calls write a stamp while `pendingRecords > 0` and drop it otherwise.
+
+A record can replay over a write made after it only while its class is undrained. The only window for that is a class decorator body, which runs before `Symbol.metadata` is attached. With no pending record, no later record can target an existing slot, so no stamp is needed. A stamp can outlive its window: replaying never removes one, and a later explicit write drops it.
 
 ## Invariants
 
-- Every object in `storage` and `lookupCache` is the result of `normalizeTarget`. The prototype walk reads intermediate objects directly from `storage`, without normalizing them.
-- A value of `undefined` is stored like any other value, and `has*` reports it as absent.
-- `getOwnMetadata` never reads or writes the cache.
+- The target used as a key of `storage` is always the object the caller passed, or `owner` / `owner.prototype` during a replay.
+- A value of `undefined` is stored like any other value, and `has*` reports it as present.
+- `pendingRecords` equals the number of records that sit in own arrays of `Symbol.metadata` objects and were not drained.
+- The container never writes outside its own `WeakMap` and the `recordsKey` property of `context.metadata`.

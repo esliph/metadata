@@ -21,7 +21,7 @@ Solve a specific task.
 
 Look up a fact.
 
-- [API](reference/api.md): `ReflectMetadata`, the global `Reflect`, `MetadataContainer` and the exported types.
+- [API](reference/api.md): `ReflectMetadata`, the global `Reflect`, `decorate`, `MetadataContainer` and the exported types.
 - [Decorators](reference/decorators.md): `metadata` and `metadataParam`.
 - [Metadata locations](reference/metadata-locations.md): where each `target`, `propertyKey` and `parameterIndex` combination stores its metadata.
 - [Exceptions](reference/exceptions.md)
@@ -31,9 +31,9 @@ Look up a fact.
 
 Understand how and why the library works.
 
-- [How metadata lookup works](explanation/how-lookup-works.md): locations, inheritance and the lookup cache.
+- [How metadata lookup works](explanation/how-lookup-works.md): locations, inheritance and why there is no cache.
 - [Decorators and initializers](explanation/decorators-and-initializers.md): when decorator metadata is written.
 - [Architecture](explanation/architecture/overview.md), for contributors:
   - [Overview](explanation/architecture/overview.md): layers, modules and the build pipeline.
-  - [Storage model](explanation/architecture/storage-model.md): data structures, normalization and costs.
+  - [Storage model](explanation/architecture/storage-model.md): data structures, decorator records and costs.
   - [Design decisions](explanation/architecture/design-decisions.md): the choices that shape the library, with their trade-offs.

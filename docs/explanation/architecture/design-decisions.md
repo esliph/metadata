@@ -2,19 +2,35 @@
 
 This page is for contributors. It records the decisions that shape the library: what was chosen, what it gains, what it costs, the strongest alternative and the condition that would reopen the decision.
 
-The repository has no written rationale for these decisions. Each section describes the decision as the code shows it. The gains and costs are consequences visible in the code and tests; where a reason is inferred, the text says so.
+Version 3.0.0 made the library behave like `reflect-metadata` 0.2.2 on every operation both have. Several decisions of earlier versions changed for that reason, and this page records the new ones.
+
+## Parity with reflect-metadata is the contract
+
+**Decision.** The storage operations and `decorate` return what `reflect-metadata` 0.2.2 returns, or throw a `TypeError` where it does. A differential suite (`tests/parity`) runs each scenario on the library and on `reflect-metadata/no-conflict` and requires equal results.
+
+**Gains.** Moving from `reflect-metadata` needs no review of storage semantics. Any difference found by the suite is a bug, not an opinion.
+
+**Costs.** The library inherits the semantics it would not have chosen, such as a target used exactly as given and `hasOwnMetadata` true for an `undefined` value. `reflect-metadata` is a devDependency, used only as the oracle.
+
+**Alternative.** Keep the earlier semantics (class and prototype normalization, a cache) and document the differences. Rejected: each difference was a bug for whoever migrates.
+
+**Revisit when** `reflect-metadata` releases a version that changes a shared operation. Update the oracle and review the suite.
 
 ## Own store instead of a global polyfill
 
 **Decision.** The library exports a `ReflectMetadata` instance named `Reflect` and never changes the native `Reflect`.
 
-**Gains.** Importing the package has no global side effect. Two libraries can each keep a private store (`new ReflectMetadata()`), and tests can start from an empty one.
+**Gains.** Two libraries can each keep a private store (`new ReflectMetadata()`), and tests can start from an empty one.
 
 **Costs.** Every module imports `Reflect` explicitly, and the import hides the native `Reflect` in that module. Code written against the `reflect-metadata` global does not work unchanged.
 
-**Alternative.** Patch `globalThis.Reflect`, as `reflect-metadata` does. Rejected in effect: it would give one shared store for the whole process and drop isolation.
+**Alternative.** Patch `globalThis.Reflect`, as `reflect-metadata` does. It would give one shared store for the whole process and drop isolation.
 
 **Revisit when** compatibility with code that expects the global API becomes a requirement. An opt-in entry point that installs the methods on the global would add it without changing the default.
+
+### The one global side effect
+
+Earlier versions listed "no global side effect" as a reason for their design. Version 3.0.0 reverses it for one case: the library defines `Symbol.metadata` when the runtime lacks it. The decorators need `context.metadata`, and `tsc` emits it only when that symbol exists. The definition is `Symbol.metadata ??= Symbol.for('Symbol.metadata')` and changes nothing when the runtime already has the symbol. The alternative was to ask every consumer to define the symbol, one more setup line for every project.
 
 ## Standard decorators instead of legacy decorators
 
@@ -22,75 +38,63 @@ The repository has no written rationale for these decisions. Each section descri
 
 **Gains.** They work with the decorator model that TypeScript 5 enables by default and that JavaScript is standardizing.
 
-**Costs.** Member decorators do not receive the prototype, so member metadata is written through initializers (next section). There are no parameter decorators, so parameters use `metadataParam` on the method or class. There is no `emitDecoratorMetadata`, so no `design:*` type metadata.
+**Costs.** Member decorators do not receive the prototype, so member metadata goes through `context.metadata` (next section). There are no parameter decorators, so parameters use `metadataParam` on the method or class. There is no `emitDecoratorMetadata`, so no `design:*` type metadata.
 
 **Alternative.** Legacy decorators, which receive the prototype and allow parameter decorators. They are the TypeScript-specific variant that the standard replaces.
 
 **Revisit when** a target user base still depends on legacy-only features such as `design:paramtypes`. A separate legacy entry point would serve it.
 
-## Write member metadata through initializers
+## Record member metadata through context.metadata
 
-**Decision.** A member decorator registers `context.addInitializer`, which writes to the class (static) or to `this.constructor.prototype` (instance).
+**Decision.** A member decorator appends a record to `context.metadata`. The store copies the records to the class or the prototype the first time any operation touches it.
 
-**Gains.** It works on every runtime that supports the TypeScript decorator output, with no global setup. Writing to `this.constructor.prototype` gives each subclass its own copy when it is instantiated.
+**Gains.** Member metadata exists as soon as the class is defined. No instance is needed, and an instance never rewrites it. An explicit `deleteMetadata` or `defineMetadata` stays in effect.
 
-**Costs.** Instance-member metadata exists only after the first instance, every instance writes it again, and every write discards the prototype's lookup cache ([Storage model](storage-model.md#interaction-with-decorators)).
+**Costs.** It needs TypeScript 5.2, the `Symbol.metadata` definition above and a drain check on every operation. Inside a class decorator body, the member metadata of the same class is not visible yet.
 
-**Alternative.** `context.metadata`, the decorator metadata object (TypeScript 5.2 and later), lets member decorators record data at class definition time, inherited through the metadata object's prototype. It requires `Symbol.metadata` at runtime; where the runtime does not provide it, someone must define it globally, which conflicts with the no-side-effect decision above. That conflict is the probable reason for the current choice (inferred).
+**Alternative.** `context.addInitializer`, the earlier choice. It writes member metadata at every construction, so metadata appears only after the first instance, a deleted value returns at the next `new`, and each write had to invalidate a cache. Another alternative is leaving the definition of `Symbol.metadata` to the consumer.
 
-**Revisit when** the supported Node versions provide `Symbol.metadata` natively. Definition-time member metadata would remove the instantiation requirement and the repeated writes.
+**Revisit when** the supported Node versions provide `Symbol.metadata` natively, which would allow dropping the polyfill, or when a class decorator needs the member metadata of its own class, which needs a context-aware API.
 
-## One map per object with string composite keys
+## Nested maps instead of string composite keys
 
-**Decision.** `storage` maps each owning object to one `Map`. Member names, parameter indexes and keys are joined into one string key ([Storage model](storage-model.md#makecompositekeykey-propertykey-parameterindex)).
+**Decision.** `storage` maps each target to a `TargetMetadata` with nested maps: member, parameter index, key ([Storage model](storage-model.md)).
 
-**Gains.** One structure per object, one lookup per level of the prototype chain, and a simple data layout.
+**Gains.** Symbols keep their identity, a `|` collides with nothing and no string is built per call.
 
-**Costs.** A string is built on every member or parameter call. Symbols collide by description, and a `|` inside a name or key can collide with another combination.
+**Costs.** More `Map` objects per target, and more lookups per call than one flat map.
 
-**Alternative.** Nested maps: object → member → parameter → key, with the original values as keys. They keep symbol identity, cannot collide and build no strings, at the price of more `Map` objects per class and more lookups per call.
+**Alternative.** One map per object with string keys, the earlier choice. It built a string on every member or parameter call, and symbols collided by description.
 
-**Revisit when** a collision is reported by a user, or a profile shows key building on a hot path. Fixing the collisions requires this change or an escape scheme for the separator.
+**Revisit when** a profile shows the lookups on a hot path.
 
-## Static and instance members share a location
+## Targets are used as given
 
-**Decision.** `normalizeTarget` sends a class with a member name to `Class.prototype`, so `(Class, 'name')` and `(Class.prototype, 'name')` are the same location.
+**Decision.** The container never replaces a class, prototype or instance with another object. Static members live on the class, instance members on the prototype.
 
-**Gains.** Callers can pass the class or the prototype for member metadata and get the same result.
+**Gains.** The same behavior as `reflect-metadata`. Static and instance members with the same name are separate, and each object keeps its own metadata.
 
-**Costs.** A static member and an instance member with the same name overwrite each other ([Known limitations](../../reference/known-limitations.md#static-and-instance-members-with-the-same-name-share-metadata)).
+**Costs.** A caller must pass the class for class metadata and the prototype for instance members. `getMetadata(key, instance)` does not find class metadata.
 
-**Alternative.** Keep static members on the class object, as `reflect-metadata` does. Callers would then have to pass the prototype for instance members.
+**Alternative.** Resolve a class with a member name to its prototype and an instance to its class, the earlier choice. It let callers pass either object, made static and instance members share a location and made all object literals share `Object`.
 
-**Revisit when** a user needs separate metadata on static and instance members with the same name.
+**Revisit when** a caller needs metadata of a class instance without a member name to fall back to the class. A helper that passes the right object serves that without changing the container.
 
-## An object without a member name resolves to its class
+## No lookup cache
 
-**Decision.** Without `propertyKey`, `normalizeTarget` replaces an object by its `constructor`.
+**Decision.** Reads walk the prototype chain every time ([How metadata lookup works](../how-lookup-works.md#there-is-no-cache)).
 
-**Gains.** An instance or a prototype reads its class metadata directly: `getMetadata(key, instance)` works.
+**Gains.** Every read reflects every write and delete on the target or on any object of its chain, and every `Object.setPrototypeOf`. There is no invalidation to get wrong.
 
-**Costs.** Every object literal resolves to `Object` and shares one location, as do all arrays (`Array`) and all objects of any other built-in constructor. Two instances of a class cannot hold different class-level metadata.
+**Costs.** A read costs map operations per chain level. [hypothesis] That cost is small at typical depths (5 or less). No benchmark exists.
 
-**Alternative.** Keep the object as it is and let the prototype walk find the class metadata. It would not find it: the walk from an instance passes through prototypes, never through the constructor.
+**Alternative.** A store-wide version counter: every write increments it, and a cache entry is valid only with the current version. It also needs a prototype-change signal, which the language does not give.
 
-**Revisit when** metadata on individual objects without a member name is needed. Resolving only class instances, and not plain objects, would remove the literal sharing.
-
-## Per-object lookup cache
-
-**Decision.** `getMetadata` caches results, including misses, on the starting object. A write clears the cache of its own object only.
-
-**Gains.** A repeated read costs a fixed number of map operations, whatever the inheritance depth. Validation, normalization and the key string are still built on every read.
-
-**Costs.** Descendants keep stale results after an ancestor changes ([Known limitations](../../reference/known-limitations.md#subclass-lookups-can-return-stale-values)).
-
-**Alternative.** A store-wide version counter: every write increments it, and a cache entry is valid only if it carries the current version. Invalidation is correct and costs one integer comparison per read. Another alternative is no cache, since the chain walk is short.
-
-**Revisit now.** The cost is a correctness defect, not a trade-off. Choosing between the version counter and removing the cache needs a benchmark of `getMetadata` hits and misses at realistic depths.
+**Revisit when** a consumer reports a lookup hot path. Measure before adding any cache back.
 
 ## Facade over a container
 
-**Decision.** `ReflectMetadata` forwards storage calls to a `MetadataContainer` and adds the decorators. Both classes are exported.
+**Decision.** `ReflectMetadata` forwards storage calls to a `MetadataContainer` and adds the decorators and `decorate`. Both classes are exported.
 
 **Gains.** Storage logic is tested directly (`tests/internal`), separate from the decorators (`tests/public`).
 

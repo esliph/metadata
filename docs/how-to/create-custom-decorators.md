@@ -34,12 +34,12 @@ export function getRoute(target: object, method: string | symbol) {
 }
 ```
 
-`getRoute(ReportsController, 'list')` and `getRoute(ReportsController.prototype, 'list')` read the same location.
+Pass the prototype to read an instance method, `getRoute(ReportsController.prototype, 'list')`, and the class to read a static method, `getRoute(ReportsController, 'create')`.
 
 ## Choose keys that do not collide
 
 - Prefix string keys with a namespace (`http:route`, `di:inject`), because every decorator that writes to the same store shares one key space per location.
-- On members and parameters, two `Symbol` keys with the same description are the same key. Give each symbol a unique description, or use namespaced strings. See [Known limitations](../reference/known-limitations.md#symbol-keys-collide-by-description-on-members-and-parameters).
+- A `Symbol` key keeps its identity, so two symbols with the same description are different keys. A string key shared with another decorator is the same key.
 
 ## Restrict where a decorator applies
 

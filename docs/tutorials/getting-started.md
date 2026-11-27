@@ -28,7 +28,7 @@ npm install @esliph/metadata typescript
 }
 ```
 
-The library uses standard decorators, the decorator syntax that JavaScript is standardizing. TypeScript enables them by default from version 5.0. Do not enable `experimentalDecorators`, which switches TypeScript to its older, incompatible decorators.
+The library uses standard decorators, the decorator syntax that JavaScript is standardizing. TypeScript enables them by default from version 5.0, and the library needs version 5.2 or later. Do not enable `experimentalDecorators`, which switches TypeScript to its older, incompatible decorators.
 
 Check the compiler version:
 
@@ -36,7 +36,7 @@ Check the compiler version:
 npx tsc --version
 ```
 
-The version is 5.0 or later. This tutorial was tested with TypeScript 5.9 and 7.0.
+The version is 5.2 or later.
 
 ## 2. Write the decorators
 
@@ -95,6 +95,7 @@ import { UsersController } from './users.controller'
 
 console.log(Reflect.getMetadata('http:prefix', UsersController))
 console.log(Reflect.getMetadata('http:get', UsersController.prototype, 'find'))
+console.log(Reflect.getMetadata('http:param', UsersController.prototype, 'find', 0))
 ```
 
 Compile and run:
@@ -108,49 +109,26 @@ The output is:
 
 ```
 /users
-undefined
-```
-
-The class prefix is there, but the route of `find` is not. A decorator on a class writes its metadata when the class is defined. A decorator on an instance method writes its metadata when the first instance is created, and the program has not created one yet.
-
-## 5. Create an instance first
-
-Replace `src/main.ts`:
-
-```ts
-import { Reflect } from '@esliph/metadata'
-
-import { UsersController } from './users.controller'
-
-const controller = new UsersController()
-
-console.log(Reflect.getMetadata('http:prefix', UsersController))
-console.log(Reflect.getMetadata('http:get', UsersController.prototype, 'find'))
-console.log(Reflect.getMetadata('http:param', UsersController.prototype, 'find', 0))
-```
-
-Compile and run again. The output is:
-
-```
-/users
 /:id
 id
 ```
 
-The member metadata lives on `UsersController.prototype` under the member name. The parameter metadata lives in the same place, with the parameter index as the last argument.
+The program never creates a `UsersController` instance. The decorators record their metadata when the class is defined.
 
-## 6. Build the route table
+The class metadata lives on the class. The member metadata lives on `UsersController.prototype` under the member name. The parameter metadata lives in the same place, with the parameter index as the last argument.
 
-Create `src/routes.ts`. It reads the prefix from the instance, walks the methods of the prototype and keeps the ones that have a route:
+## 5. Build the route table
+
+Create `src/routes.ts`. It reads the prefix from the class, walks the methods of its prototype and keeps the ones that have a route:
 
 ```ts
 import { Reflect } from '@esliph/metadata'
 
 export type Route = { path: string; method: string; params: string[] }
 
-export function buildRoutes(controller: object): Route[] {
+export function buildRoutes(controller: Function): Route[] {
   const prefix = Reflect.getMetadata('http:prefix', controller) as string
-  const prototype = Object.getPrototypeOf(controller)
+  const prototype = controller.prototype
 
   const routes: Route[] = []
   for (const method of Object.getOwnPropertyNames(prototype)) {
@@ -166,17 +144,13 @@ export function buildRoutes(controller: object): Route[] {
 }
 ```
 
-`getMetadata('http:prefix', controller)` receives an instance, not the class. Without a member name, the library reads the metadata of the instance's class.
-
 Replace `src/main.ts`:
 
 ```ts
 import { buildRoutes } from './routes'
 import { UsersController } from './users.controller'
 
-const controller = new UsersController()
-
-console.log(buildRoutes(controller))
+console.log(buildRoutes(UsersController))
 ```
 
 Compile and run. The output is:
@@ -190,10 +164,10 @@ Compile and run. The output is:
 
 ## What you built
 
-You wrote three decorators, attached metadata to a class, its methods and a method parameter, and read all of it back to build a route table. Along the way you saw that instance-member metadata exists only after the first instance is created.
+You wrote three decorators, attached metadata to a class, its methods and a method parameter, and read all of it back to build a route table, without creating an instance.
 
 ## Next steps
 
 - [Create custom decorators](../how-to/create-custom-decorators.md): typed helpers that write and read their own keys.
 - [Metadata locations](../reference/metadata-locations.md): every combination of `target`, `propertyKey` and `parameterIndex`.
-- [Decorators and initializers](../explanation/decorators-and-initializers.md): why instance-member metadata waits for an instance.
+- [Decorators and initializers](../explanation/decorators-and-initializers.md): how decorators record their metadata at class definition.

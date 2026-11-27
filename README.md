@@ -14,14 +14,17 @@ Reflect.getMetadata('role', UserService) // 'service'
 ## Features
 
 - Metadata on classes, methods, fields, accessors, getters, setters, and method or constructor parameters.
-- Inheritance: `getMetadata` and `hasMetadata` follow the prototype chain. `getOwnMetadata` and `hasOwnMetadata` do not.
+- The same results as `reflect-metadata` 0.2.2 for `defineMetadata`, `hasMetadata`, `hasOwnMetadata`, `getMetadata`, `getOwnMetadata`, `getMetadataKeys`, `getOwnMetadataKeys`, `deleteMetadata` and `decorate`.
+- Inheritance: `getMetadata`, `hasMetadata` and `getMetadataKeys` follow the prototype chain. The `Own` variants do not.
+- Decorator metadata exists as soon as the class is defined. No instance is needed.
 - Standard decorators, the TC39 proposal that TypeScript 5 implements (`experimentalDecorators: false`), including parameter metadata through `metadataParam`.
 - Isolated stores: each `new ReflectMetadata()` has its own storage, separate from the global `Reflect` instance.
 - Weak references: metadata does not keep its target alive.
 
 ## Requirements
 
-- TypeScript 5.0 or later, with `experimentalDecorators` disabled, to use the decorators. The functional API (`defineMetadata`, `getMetadata`, ...) works without decorators.
+- TypeScript 5.2 or later, with `experimentalDecorators` disabled, to use the decorators. The functional API (`defineMetadata`, `getMetadata`, ...) works without decorators.
+- Import `@esliph/metadata` before the decorated classes are defined. The import defines `Symbol.metadata` when the runtime lacks it.
 - The package ships CommonJS compiled to ES2019.
 
 ## Installation
@@ -50,8 +53,6 @@ class UserService {
   list(request: unknown) {}
 }
 
-new UserService(console)
-
 Reflect.getMetadata('role', UserService) // 'service'
 Reflect.getMetadata('inject', UserService, undefined, 0) // 'Logger'
 Reflect.getMetadata('column', UserService.prototype, 'name') // 'user_name'
@@ -59,7 +60,7 @@ Reflect.getMetadata('route', UserService.prototype, 'list') // '/users'
 Reflect.getMetadata('inject', UserService.prototype, 'list', 0) // 'Request'
 ```
 
-Decorators on instance members write their metadata when an instance is created, and again for every new instance. Before the first instance, `getMetadata('column', UserService.prototype, 'name')` returns `undefined`. [Decorators and initializers](docs/explanation/decorators-and-initializers.md) explains why.
+Static members are stored on the class and instance members on `UserService.prototype`. [Decorators and initializers](docs/explanation/decorators-and-initializers.md) explains how decorators record metadata.
 
 The same locations without decorators:
 
@@ -83,14 +84,11 @@ Importing `Reflect` from this package hides the native `Reflect` in that module.
 
 ## Known limitations
 
-Some current behaviors differ from what most users expect. They include:
+- Member metadata is not visible inside a class decorator body. Read it inside `context.addInitializer`.
+- A class decorator that returns an unrelated class drops the class metadata written to the original.
+- A decorated class created inside a class decorator loses its member metadata.
 
-- Subclass lookups can return stale values after a parent changes.
-- `Symbol` keys collide by description on members and parameters.
-- Object literals share one location.
-- Instance-member metadata appears only after instantiation.
-
-[Known limitations](docs/reference/known-limitations.md) lists all of them, each with a workaround.
+[Known limitations](docs/reference/known-limitations.md) gives an example and a workaround for each.
 
 ## Contributing
 

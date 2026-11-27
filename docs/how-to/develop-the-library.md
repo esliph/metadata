@@ -24,7 +24,9 @@ npx vitest run tests/public/decorator.spec.ts -t "class decorator" --coverage.en
 ```
 
 - `tests/internal` tests `MetadataContainer` directly.
-- `tests/public` tests the `ReflectMetadata` facade and the decorators.
+- `tests/public` tests the `ReflectMetadata` facade, `decorate` and the decorators.
+- `tests/parity` runs each scenario on the library and on `reflect-metadata/no-conflict` and requires equal results. Create metadata keys once per test, outside the scenario, and targets inside it: the `reflect-metadata` store is process-global.
+- `tests/emit` compiles fixtures with `tsc` and runs them in a fresh Node process where `Symbol.metadata` is not predefined. Vitest compiles with esbuild, which hides a missing polyfill, so this is the only test that covers it.
 - `tests/common/types-target-list.ts` lists the valid and invalid targets that several suites reuse.
 
 ## Check types and lint
@@ -49,23 +51,23 @@ Prettier settings are in `.prettierrc`: no semicolons, single quotes, 2 spaces, 
 npm run build
 ```
 
-The script runs `rm -rf dist`, `tsc` and `tsc-alias`, which rewrites the `@*` import aliases into relative paths. The output is CommonJS in `dist/`. On Windows, run it from Git Bash, because `cmd` and PowerShell have no `rm -rf`.
+The script removes `dist`, runs `tsc -p tsconfig.build.json` and runs `tsc-alias`, which rewrites the `@*` import aliases into relative paths. The output is CommonJS in `dist/`. It works in any shell.
 
-To test the package as a consumer would install it:
+To check the built package as a consumer would install it:
 
 ```bash
-npm pack
+npm run check:package
 ```
 
-Install the generated `.tgz` in another project.
+The script checks the manifest, the packed file list, and installs the package in a temporary project that compiles a TypeScript file and requires the package. Run `npm run build` first.
 
 ## Release
 
 1. Update `version` in `package.json` and commit.
-2. Run `npx vitest run` and `npx tsc -p tests/tsconfig.json --noEmit`. The release workflow does not run tests.
-3. Publish a GitHub release whose tag is the version, for example `2.0.0`.
+2. Run `npx eslint .`, `npx tsc -p tests/tsconfig.json --noEmit`, `npx vitest run`, `npm run build` and `npm run check:package`. The release workflow runs the same checks.
+3. Publish a GitHub release whose tag is the version, for example `3.0.0`.
 
-Publishing the release starts `.github/workflows/publish.yml`, which runs `npm ci`, `npm run build` and `npm publish` on Node 20 with the `NPM_TOKEN` secret.
+Publishing the release starts `.github/workflows/publish.yml`, which runs `npm ci`, lint, type check, tests, build, `npm run check:package` and `npm publish` on Node 20 with the `NPM_TOKEN` secret.
 
 ## Update the documentation
 

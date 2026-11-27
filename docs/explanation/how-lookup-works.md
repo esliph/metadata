@@ -1,34 +1,45 @@
 # How metadata lookup works
 
-Every call names a place: a class, a member, or a parameter. Before storing or reading anything, the library turns that place into two values: the object that owns the metadata and the key it is stored under. This page explains that translation, how inheritance falls out of it, and why reads are cached.
+Every call names a place: a class, a member or a parameter. The library stores each place separately and, for reads that follow inheritance, walks the prototype chain. This page explains how a place is stored, how inheritance falls out of the prototype chain, and why there is no cache.
 
-## A place is an object plus a key
+## A place is a target, a member and a parameter
 
-The library keeps one map of metadata per object. A call resolves to one of those objects and to a key inside its map:
+The library keeps one `WeakMap` from each target to its metadata. The target is used exactly as the caller gave it: a class, a prototype and an instance are three different targets. A call selects one slot in that target's metadata:
 
-- Class metadata belongs to the class. Whatever you pass without a member name (the class, its prototype, an instance) resolves to the class itself, so `Reflect.getMetadata('role', new User())` reads what `@Reflect.metadata('role', ...)` wrote on `User`.
-- Member metadata belongs to the prototype. Passing the class with a member name resolves to `Class.prototype`, which is where methods live in JavaScript. This is also why a static member and an instance member with the same name share metadata: both resolve to the prototype.
-- Parameter metadata belongs to the same object as its member, and the parameter index becomes part of the key. Constructor parameters belong to the class.
+- Without a member name and without a parameter index, the slot holds the target's own metadata.
+- With a member name, the slot holds that member's metadata. The name goes through `ToPropertyKey`, so `1` and `'1'` are the same member and two symbols with equal descriptions are different members.
+- With a parameter index, the slot holds that parameter's metadata. Without a member name it is a constructor parameter.
 
-Each object has one map. The class's map holds the class metadata and the constructor parameters; the prototype's map holds the members and their parameters. Because the member name and parameter index go into the key, entries of different members stay apart, except for the collisions listed in [Known limitations](../reference/known-limitations.md#member-names-and-keys-can-collide-after-joining). The full list of combinations is in [Metadata locations](../reference/metadata-locations.md).
+Each slot holds its own keys. A member named `'m'`, its parameter 0 and the target's own metadata never share keys. The full list of combinations is in [Metadata locations](../reference/metadata-locations.md).
+
+By convention a class stores class metadata and static members, and `Class.prototype` stores instance members. A decorator follows that convention; the container does not enforce it.
 
 ## Inheritance comes from the prototype chain
 
-JavaScript already links a subclass to its parent twice: `Sub` has `Base` as its prototype, and `Sub.prototype` has `Base.prototype` as its prototype. `getMetadata` uses those links. It looks in the map of the resolved object, and if the key is not there, it moves to `Object.getPrototypeOf(object)` and looks again, until the chain ends.
+`getMetadata`, `hasMetadata` and `getMetadataKeys` walk the chain starting at the target. At each level they look in that level's slot for the same member and parameter:
 
-The library needs no inheritance logic of its own. Class metadata climbs from `Sub` to `Base`; member metadata climbs from `Sub.prototype` to `Base.prototype`. A subclass overrides a value by storing its own, and the parent keeps its value.
+- `getMetadata` and `hasMetadata` stop at the first level where the key is present. Presence means the key is stored, even with the value `undefined`, so an own `undefined` hides the parent's value.
+- `getMetadataKeys` visits every level and lists each key once. Keys of the target come first.
 
-The `Own` variants (`getOwnMetadata`, `hasOwnMetadata`) skip the climb and answer only for the resolved object. They tell an inherited value from one stored on the object itself. For decorated instance members, "stored on the object" is not the same as "declared by the class": creating a subclass instance copies the parent's decorator values to the subclass prototype ([Decorators and initializers](decorators-and-initializers.md#how-a-member-decorator-reaches-the-class)).
+The next level comes from `OrdinaryGetPrototypeOf`, a port of the function in `reflect-metadata`. It returns `Object.getPrototypeOf(level)`, except for an ES5-style subclass: a function whose prototype is `Function.prototype` but whose `prototype` object inherits from another class. For it, the function returns that class, found through the `constructor` of the `prototype`'s prototype. With a native `class ... extends`, the plain prototype is the parent class.
 
-## Reads are cached
+A class chain is `Sub`, `Base`, `Function.prototype`, `Object.prototype`. A prototype chain is `Sub.prototype`, `Base.prototype`, `Object.prototype`. Objects without `Object.prototype`, such as `Object.create(null)`, end the chain.
 
-Climbing the chain costs map lookups at each level, and frameworks read the same metadata many times: once per request, per instance or per injection. So `getMetadata` remembers each answer on the object it started from, including "not found". The next read of the same key on the same object costs a fixed number of map operations, whatever the inheritance depth.
+The `Own` variants (`getOwnMetadata`, `hasOwnMetadata`, `getOwnMetadataKeys`) skip the walk and answer only for the target.
 
-The cache is cleared for an object when that object's own metadata changes. It is not cleared for the objects below it in the chain. A subclass that has already been read keeps its old answer after its parent changes. Class decorators and static-member decorators write when classes are defined, before reads usually start, so they do not cause it. It shows when `defineMetadata` or `deleteMetadata` change a parent after reads have started, and with instance-member decorators, which write at instantiation: a subclass read before the first instance caches "not found". [Known limitations](../reference/known-limitations.md#subclass-lookups-can-return-stale-values) has the details and a workaround.
+## There is no cache
+
+Every read walks the chain, one `WeakMap` lookup and one or two `Map` lookups per level. Class chains are short, so the cost grows with inheritance depth, which is small in practice. No benchmark exists in the repository.
+
+A cache would have to be invalidated for every descendant when an ancestor is written, and when `Object.setPrototypeOf` changes a chain. `reflect-metadata` has no cache either. Earlier versions of this library cached results per target and cleared only the written target, which returned stale values for subclasses. Measure before adding a cache back: a consumer with a hot lookup path is the reason to do it.
+
+## Decorator records are copied during the walk
+
+Member decorators record their metadata on the class when it is defined. The walk copies the records of a class or prototype the first time it reaches it. [Decorators and initializers](decorators-and-initializers.md#the-store-copies-the-records-on-first-access) explains the copy.
 
 ## Weak references
 
-Each map of metadata is held in a `WeakMap` keyed by its object. The store does not keep a class or an instance alive: when nothing else references it, the object and its metadata are collected together.
+Each target's metadata is held in a `WeakMap` keyed by the target. The store does not keep a class or an instance alive: when nothing else references it, the object and its metadata are collected together.
 
 ## Related pages
 

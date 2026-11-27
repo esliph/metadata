@@ -19,7 +19,7 @@ store.getMetadata('scope', UserService) // 'local'
 Reflect.hasMetadata('scope', UserService) // false
 ```
 
-The store has the full API: `defineMetadata`, `getMetadata`, `getOwnMetadata`, `hasMetadata`, `hasOwnMetadata`, `deleteMetadata`, `metadata` and `metadataParam`.
+The store has the full API: `defineMetadata`, `getMetadata`, `getOwnMetadata`, `hasMetadata`, `hasOwnMetadata`, `getMetadataKeys`, `getOwnMetadataKeys`, `deleteMetadata`, `decorate`, `metadata` and `metadataParam`.
 
 ## Give a library its own store
 
